@@ -1,0 +1,38 @@
+{
+  "day": "2025-03-01",
+  "cutoff": "2025-03-02",
+  "stations": ["east", "west"],
+  "batches": {
+    "E1": {"station": "east", "position": 1, "kind": "initial", "rows": [["east", "a", 2]]},
+    "E2": {"station": "east", "position": 2, "kind": "correction", "rows": [["east", "a", 5]]},
+    "E3": {"station": "east", "position": 3, "kind": "correction", "rows": [["east", "a", 8]]},
+    "E4": {"station": "east", "position": 4, "kind": "correction", "rows": [["east", "a", 99], ["east", "missing", 1]]},
+    "E5": {"station": "east", "position": 5, "kind": "correction", "rows": [["east", "a", 101]]},
+    "W1": {"station": "west", "position": 1, "kind": "initial", "rows": [["west", "a", 4]]},
+    "W2": {"station": "west", "position": 2, "kind": "correction", "rows": [["west", "a", 6]]},
+    "W3": {"station": "west", "position": 3, "kind": "correction", "rows": []}
+  },
+  "arrival_before_gap_fill": ["E1", "W1", "E3", "W2"],
+  "blocked_cut": {"seal_id": "blocked", "positions": {"east": 3, "west": 2}},
+  "first_seal": {"seal_id": "S1", "positions": {"east": 1, "west": 2}, "total": 8},
+  "gap_fill": "E2",
+  "first_purge": {"E1": ["S1"], "W1": ["S1"], "W2": ["S1"]},
+  "more_seals": [
+    {"seal_id": "S2", "positions": {"east": 2, "west": 1}, "total": 9},
+    {"seal_id": "S3", "positions": {"east": 3, "west": 2}, "total": 14},
+    {"seal_id": "S4", "positions": {"east": 1, "west": 2}, "total": 8}
+  ],
+  "second_purge": {"E2": ["S2", "S3"], "E3": ["S3"]},
+  "seal_after_purge": {"seal_id": "S5", "positions": {"east": 2, "west": 2}, "total": 11},
+  "posting_deltas": [8, 1, 5, -6, 3],
+  "after_invalid": {
+    "arrival": ["E4", "E5", "W3"],
+    "states": {
+      "E4": {"state": "invalid", "applied_through": 3, "blocked_position": 4, "blocked_by": "invalid"},
+      "E5": {"state": "pending", "applied_through": 3, "blocked_position": 4, "blocked_by": "invalid"},
+      "W3": {"state": "applied", "applied_through": 3, "blocked_position": 4, "blocked_by": "missing"}
+    },
+    "valid_cut": {"seal_id": "S6", "positions": {"east": 3, "west": 3}, "total": 14},
+    "invalid_cut": {"seal_id": "invalid-cut", "positions": {"east": 4, "west": 3}}
+  }
+}
