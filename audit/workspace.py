@@ -4,11 +4,13 @@ from pathlib import Path
 
 from audit.purge import init_purge_schema
 from close.revisions import init_revision_schema
+from close.station_cuts import init_station_cut_schema
 from dispatch.confirm import init_confirm_schema
 from dispatch.outbound import init_outbound_schema
 from intake.batches import init_batch_schema
 from intake.observations import init_observation_schema
 from intake.source_detail import init_source_schema
+from intake.station_batches import init_station_batch_schema
 from meter_core import InputError, transaction
 from receiver.ledger import init_ledger_schema
 from receiver.receipts import init_receipt_schema
@@ -68,6 +70,7 @@ def initialize_workspace(root):
             for initialize in (
                 init_batch_schema, init_observation_schema, init_source_schema,
                 init_revision_schema, init_outbound_schema, init_confirm_schema, init_purge_schema,
+                init_station_batch_schema, init_station_cut_schema,
             ):
                 initialize(workspace.local)
         with transaction(workspace.external, write=True):

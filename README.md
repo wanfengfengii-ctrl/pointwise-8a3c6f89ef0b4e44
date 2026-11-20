@@ -39,6 +39,10 @@ python3 -B init_workspace.py work
 | `audit.lookup.lookup(local, seal_id)` | 返回该版 `Review`，未知封账号返回 `None`。`pending` 无回执及金额，`confirmed` 提供原回执和净差。 |
 | `audit.reconcile.reconcile_posting(external, review)` | 按请求号匹配外端流水并核对日期、入账顺位、金额。待核版尚无匹配结论，历史版的当前余额比较为 `None`。 |
 | `audit.purge.purge(local, cutoff)` | 返回 `PurgeResult`，列出本次清理的批号与覆盖封账号。`audit.purge.purge_history(local)` 读取已提交清理登记。 |
+| `intake.batches.register_stations(local, day, stations)` | 为尚无普通批和定稿的日期登记固定站组，返回 `None`；同日重复登记相同站集（可换序）成功，改站集抛 `ConflictError`。 |
+| `intake.batches.receive_station_batch(local, day, station, position, batch_id, kind, rows)` | 按站接收乱序批次并连续生效，返回 `StationBatchResult`，含 `state`、`applied_through`、`blocked_position`、`blocked_by`。 |
+| `close.finalize.seal_station_cut(local, day, seal_id, positions)` | 按 `{站名: 位置}` 向量封一版站位截面，返回含 `Revision` 与 `positions` 的对象。 |
+| `close.finalize.lookup_station_cut(local, seal_id)` | 按号读取已封站位截面；未知号或普通定稿返回 `None`。 |
 
 ```python
 from audit.lookup import lookup
@@ -61,3 +65,7 @@ with open_workspace('work') as work:
 相同批号的日期、批种、行序、站行和金额均须匹配原接纳结果。清理删除已覆盖的原载荷和原行，保留重投摘要、唯一现行值、定稿、出站绑定和回执。截止日当天仍在保留期。有成功定稿但超出其水位的新批仍保留，待后续封账覆盖。清理资格独立于报送状态。
 
 输入错误抛出 `meter_core.InputError`，身份冲突或勘误目标不存在抛出 `meter_core.ConflictError`，回执一致性错误抛出 `meter_core.EvidenceError`。SQLite 操作失败传播数据库错误，本地失败事务回滚。如果外端已提交而本地确认失败，原请求仍可重办，按号在确认前显示待核。两侧事务独立，所以接收账可在本地确认前已有入账。V1 处理单日逐版报送及核账。
+
+## 站批交班截面
+
+固定站组、乱序收件与站位封账见 `STATION_CUTS.md`。普通 `apply`、`seal` 对站批日抛 `ConflictError`；站批日只走 `receive_station_batch` 与 `seal_station_cut`。各站只连续整批生效，缺位或失效位阻断本站，后续批只收件待办，其他站继续；失效批整批不生效且保留原件身份。向量必须覆盖全组，位置 `0` 表示该站空前缀，正位置取该站完成至该位置时具名行的整数升合计，任一位置未完整生效则抛 `ConflictError`。清理资格按实际站位覆盖判断，可指向任一覆盖该批的历史定稿；待办、失效及从未被覆盖的批不清理。批次与封账号共用全局身份，跨日或跨模式占用同样拒绝。

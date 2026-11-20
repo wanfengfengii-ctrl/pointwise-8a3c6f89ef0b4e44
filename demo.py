@@ -3,12 +3,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from audit.lookup import lookup
-from audit.purge import purge
+from audit.purge import purge, purge_history
 from audit.reconcile import reconcile_posting
 from audit.workspace import initialize_workspace, open_workspace
-from close.finalize import seal
+from close.finalize import lookup_station_cut, seal, seal_station_cut
 from dispatch.submit import ReplyLost, advance
-from intake.batches import apply
+from intake.batches import apply, receive_station_batch, register_stations
+from meter_core import ConflictError
 from receiver.balances import balance
 from receiver.receipts import receipt_for_request
 
@@ -102,11 +103,139 @@ def demonstrate(root, sample):
     print(json.dumps(secondary_actual, ensure_ascii=False, sort_keys=True))
 
 
+def _receive_station(work, sample, batch_id):
+    batch = sample['batches'][batch_id]
+    return receive_station_batch(
+        work.local, sample['day'], batch['station'], batch['position'], batch_id,
+        batch['kind'], batch['rows'],
+    )
+
+
+def _seal_station(work, sample, sealed):
+    return seal_station_cut(
+        work.local, sample['day'], sealed['seal_id'], sealed['positions'],
+    )
+
+
+def demonstrate_station_cuts(root, sample):
+    day = sample['day']
+    initialize_workspace(root)
+    with open_workspace(root) as work:
+        register_stations(work.local, day, sample['stations'])
+        arrivals = [_receive_station(work, sample, batch_id)
+                    for batch_id in sample['arrival_before_gap_fill']]
+        gap = _receive_station(work, sample, 'E3')
+        blocked = sample['blocked_cut']
+        try:
+            _seal_station(work, sample, blocked)
+        except ConflictError:
+            blocked_rejected = True
+        else:
+            blocked_rejected = False
+        first = _seal_station(work, sample, sample['first_seal'])
+        first_purge = purge(work.local, sample['cutoff']).removed
+
+    with open_workspace(root) as work:
+        filled = _receive_station(work, sample, sample['gap_fill'])
+        replayed = _receive_station(work, sample, 'E3')
+        seals = [_seal_station(work, sample, more) for more in sample['more_seals']]
+        second_purge = purge(work.local, sample['cutoff']).removed
+        after_purge = _seal_station(work, sample, sample['seal_after_purge'])
+        deltas = []
+        while True:
+            result = advance(work.local, work.external, day)
+            if result.state == 'idle':
+                break
+            deltas.append(result.receipt.delta)
+        invalid = sample['after_invalid']
+        invalid_states = {}
+        for batch_id in invalid['arrival']:
+            outcome = _receive_station(work, sample, batch_id)
+            invalid_states[batch_id] = {
+                'state': outcome.state, 'applied_through': outcome.applied_through,
+                'blocked_position': outcome.blocked_position, 'blocked_by': outcome.blocked_by,
+            }
+        valid_cut = _seal_station(work, sample, invalid['valid_cut'])
+        try:
+            _seal_station(work, sample, invalid['invalid_cut'])
+        except ConflictError:
+            invalid_cut_rejected = True
+        else:
+            invalid_cut_rejected = False
+        history = purge_history(work.local)
+        old_cut = lookup_station_cut(work.local, sample['first_seal']['seal_id'])
+        total_balance = balance(work.external, day).total
+
+    expected = {
+        'arrival_states': [item.state for item in arrivals],
+        'gap_e3': [gap.state, gap.applied_through, gap.blocked_by],
+        'blocked_rejected': True,
+        'first_cut_total': sample['first_seal']['total'],
+        'first_purge': sorted((item.batch_id, item.covering_seal_id) for item in first_purge),
+        'gap_fill': [filled.state, filled.applied_through],
+        'replayed_e3': [replayed.state, replayed.applied_through],
+        'seal_totals': [more['total'] for more in sample['more_seals']],
+        'second_purge': sorted((item.batch_id, item.covering_seal_id) for item in second_purge),
+        'after_purge_total': sample['seal_after_purge']['total'],
+        'posting_deltas': deltas,
+        'invalid_states': invalid_states,
+        'valid_cut_total': valid_cut.revision.total,
+        'invalid_cut_rejected': True,
+        'old_cut_positions': old_cut.positions if old_cut else None,
+        'purged_batches': len(history),
+        'balance': total_balance,
+    }
+    actual = {
+        'arrival_states': [item.state for item in arrivals],
+        'gap_e3': [gap.state, gap.applied_through, gap.blocked_by],
+        'blocked_rejected': blocked_rejected,
+        'first_cut_total': first.revision.total,
+        'first_purge': sorted((item.batch_id, item.covering_seal_id) for item in first_purge),
+        'gap_fill': [filled.state, filled.applied_through],
+        'replayed_e3': [replayed.state, replayed.applied_through],
+        'seal_totals': [item.revision.total for item in seals],
+        'second_purge': sorted((item.batch_id, item.covering_seal_id) for item in second_purge),
+        'after_purge_total': after_purge.revision.total,
+        'posting_deltas': deltas,
+        'invalid_states': invalid_states,
+        'valid_cut_total': valid_cut.revision.total,
+        'invalid_cut_rejected': invalid_cut_rejected,
+        'old_cut_positions': old_cut.positions if old_cut else None,
+        'purged_batches': len(history),
+        'balance': total_balance,
+    }
+    if actual != expected:
+        raise AssertionError(
+            f'STATION_CUT_MISMATCH actual={actual!r} expected={expected!r}'
+        )
+    evidence = {
+        'case_id': 'v6.station_cuts_gap_fill_and_purge', 'input': sample,
+        'expected': expected, 'actual': actual,
+        'code_paths': [
+            'intake/station_batches.py', 'close/station_cuts.py', 'audit/retention.py',
+            'audit/purge.py', 'dispatch/submit.py',
+        ],
+        'oracle': 'east a: 2,7,8; west a: 4,6; gap-fill E2 then E3; cuts totals 8,9,14,8,11,14.',
+    }
+    print('POINTWISE_STATION_CUT ' + json.dumps(evidence, ensure_ascii=False, sort_keys=True))
+    print(json.dumps(
+        {key: actual[key] for key in (
+            'gap_e3', 'gap_fill', 'replayed_e3', 'seal_totals', 'posting_deltas',
+            'invalid_states', 'balance',
+        )},
+        ensure_ascii=False, sort_keys=True,
+    ))
+
+
 def main():
     sample_path = Path(__file__).resolve().parent / 'samples' / 'shift.json'
     sample = json.loads(sample_path.read_text(encoding='utf-8'))
     with TemporaryDirectory(prefix='estuary-demo-') as root:
         demonstrate(root, sample)
+    cut_sample_path = Path(__file__).resolve().parent / 'samples' / 'station_cuts.json'
+    cut_sample = json.loads(cut_sample_path.read_text(encoding='utf-8'))
+    with TemporaryDirectory(prefix='estuary-cut-demo-') as root:
+        demonstrate_station_cuts(root, cut_sample)
 
 
 if __name__ == '__main__':

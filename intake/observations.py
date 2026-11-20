@@ -43,3 +43,11 @@ def iter_effective_amounts(connection, day):
     rows = connection.execute('SELECT litres FROM observations WHERE day = ?', (day,))
     for (litres,) in rows:
         yield decode_litres(litres)
+
+
+def iter_station_amounts(connection, day, station):
+    rows = connection.execute(
+        'SELECT litres FROM observations WHERE day = ? AND station = ?', (day, station),
+    )
+    for (litres,) in rows:
+        yield decode_litres(litres)
